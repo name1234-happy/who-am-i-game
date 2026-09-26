@@ -1,25 +1,21 @@
-# Who Am I? — Phone/Online Version
+# Who Am I? — Host Can Play
 
-This version is designed for phones. Players only need a web browser once the server is deployed online.
+This version lets the host be a normal player.
 
-## Included
-- Phone-friendly layout
-- Host creates a game code
-- Players join with name + code
-- Live player dashboard
-- Host enters a word/phrase AND category
-- Category is shown as a clue on each player's screen
-- Host chooses left/right movement
-- Next turn and reset controls
+## Secret-word privacy
 
-## For an online public link
-This project still contains a Node.js server because multiplayer games need a server to synchronize players. Once deployed to a Node-compatible hosting service, players do NOT need Node.js or Command Prompt on their phones.
+- Every player, including the host, enters their own secret word and category.
+- The host NEVER receives the submitted word or category data.
+- The host sees only player names and whether their secret card has been submitted.
+- The host chooses a player's secret card and presses Move Left or Move Right.
+- The server privately sends the selected card to the neighboring player.
+- Only the player receiving the card can see the word and category.
+- The host can therefore play without knowing any secret word.
+
+## Deploy
+
+Build command:
+npm install
 
 Start command:
 npm start
-
-Port:
-The server automatically uses the hosting platform's PORT value.
-
-## Important
-I cannot create a permanent public internet address directly from this ZIP alone. It needs to be deployed to a hosting service. The same files can be uploaded to a suitable Node.js host.
