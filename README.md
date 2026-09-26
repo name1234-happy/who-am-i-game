@@ -1,21 +1,9 @@
-# Who Am I? — Host Can Play
+# Who Am I - fixed version
 
-This version lets the host be a normal player.
+Flow: everyone submits a secret word/category -> host chooses a card and left/right -> host presses Start game -> only the target player receives the word -> target screen becomes a full-screen landscape-style guessing screen -> triple-tap to return to dashboard.
 
-## Secret-word privacy
+Host never receives the secret word/category.
 
-- Every player, including the host, enters their own secret word and category.
-- The host NEVER receives the submitted word or category data.
-- The host sees only player names and whether their secret card has been submitted.
-- The host chooses a player's secret card and presses Move Left or Move Right.
-- The server privately sends the selected card to the neighboring player.
-- Only the player receiving the card can see the word and category.
-- The host can therefore play without knowing any secret word.
-
-## Deploy
-
-Build command:
-npm install
-
-Start command:
-npm start
+Deploy:
+Build: npm install
+Start: npm start

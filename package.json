@@ -1,6 +1,6 @@
 {
-  "name": "who-am-i-host-player",
-  "version": "4.0.0",
+  "name": "who-am-i-fixed-landscape",
+  "version": "5.0.0",
   "private": true,
   "scripts": {
     "start": "node server.js"

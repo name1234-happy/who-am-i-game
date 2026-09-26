@@ -1,166 +1,21 @@
-const express=require("express");
-const http=require("http");
-const {Server}=require("socket.io");
-const crypto=require("crypto");
-
-const app=express();
-const server=http.createServer(app);
-const io=new Server(server);
-const games=new Map();
+const express=require("express"),http=require("http"),{Server}=require("socket.io"),crypto=require("crypto");
+const app=express(),server=http.createServer(app),io=new Server(server),games=new Map();
 app.use(express.static("public"));
-
-function makeCode(){
-  let c;
-  do c=crypto.randomBytes(3).toString("hex").toUpperCase();
-  while(games.has(c));
-  return c;
-}
-
-function state(g){
-  return {
-    code:g.code,
-    hostId:g.hostId,
-    started:g.started,
-    players:g.players.map((p,i)=>({
-      id:p.id,name:p.name,submitted:Boolean(g.submissions[p.id]),index:i
-    })),
-    currentTurn:g.currentTurn
-  };
-}
-
+const code=()=>{let c;do c=crypto.randomBytes(3).toString("hex").toUpperCase();while(games.has(c));return c};
+function state(g){return {code:g.code,hostId:g.hostId,phase:g.phase,players:g.players.map((p,i)=>({id:p.id,name:p.name,submitted:!!g.submissions[p.id],index:i})),pending:g.pending&&{sourceId:g.pending.sourceId,targetId:g.pending.targetId,direction:g.pending.direction}}}
 function send(g){
-  io.to(g.code).emit("state",state(g));
-
-  // IMPORTANT: The host NEVER receives submitted words/categories.
-  // The host only receives which players have submitted, so the host can
-  // choose a player/card without learning the secret.
-  io.to(g.hostId).emit("host:cards",
-    g.players.map(p=>({
-      id:p.id,
-      name:p.name,
-      submitted:Boolean(g.submissions[p.id])
-    }))
-  );
-
-  // A player only receives a word when the host moves it to that player.
-  g.players.forEach(p=>{
-    const a=g.assignments[p.id];
-    io.to(p.id).emit("private",{
-      word:a?.word||"",
-      category:a?.category||"",
-      hasWord:Boolean(a)
-    });
-  });
+ io.to(g.code).emit("state",state(g));
+ io.to(g.hostId).emit("host:cards",g.players.map(p=>({id:p.id,name:p.name,submitted:!!g.submissions[p.id]})));
+ g.players.forEach(p=>{let a=g.active[p.id];io.to(p.id).emit("private",{hasWord:!!a,word:a?.word||"",category:a?.category||""})});
 }
-
 io.on("connection",s=>{
-  s.on("create",({name})=>{
-    name=String(name||"").trim().slice(0,24);
-    if(!name)return s.emit("err","Enter your name.");
-    const code=makeCode();
-    const g={
-      code,hostId:s.id,
-      players:[{id:s.id,name}],
-      submissions:{},
-      assignments:{},
-      started:false,
-      currentTurn:0
-    };
-    games.set(code,g);
-    s.join(code);
-    s.data.code=code;
-    send(g);
-  });
-
-  s.on("join",({code,name})=>{
-    code=String(code||"").trim().toUpperCase();
-    name=String(name||"").trim().slice(0,24);
-    const g=games.get(code);
-    if(!g)return s.emit("err","Game code not found.");
-    if(g.started)return s.emit("err","The round has already started. Ask the host to reset.");
-    if(!name)return s.emit("err","Enter your name.");
-    if(g.players.some(p=>p.name.toLowerCase()===name.toLowerCase()))
-      return s.emit("err","That name is already in use.");
-    g.players.push({id:s.id,name});
-    s.join(code);
-    s.data.code=code;
-    send(g);
-  });
-
-  // Every player, including the host, submits a secret word/category.
-  s.on("submit",({word,category})=>{
-    const g=games.get(s.data.code);
-    if(!g||g.started)return;
-    word=String(word||"").trim().slice(0,120);
-    category=String(category||"").trim().slice(0,60);
-    if(!word||!category)return s.emit("err","Enter both a word/phrase and category.");
-    g.submissions[s.id]={word,category};
-    send(g);
-  });
-
-  // Host can start only after everyone has submitted.
-  s.on("start",()=>{
-    const g=games.get(s.data.code);
-    if(!g||g.hostId!==s.id)return;
-    if(g.players.length<2)return s.emit("err","At least 2 players are needed.");
-    const missing=g.players.filter(p=>!g.submissions[p.id]);
-    if(missing.length)return s.emit("err","Waiting for: "+missing.map(p=>p.name).join(", "));
-    g.started=true;
-    g.currentTurn=0;
-    send(g);
-  });
-
-  // Host selects a PLAYER, not a visible word.
-  // The server privately moves that player's secret word to the selected neighbor.
-  s.on("move",({playerId,direction})=>{
-    const g=games.get(s.data.code);
-    if(!g||g.hostId!==s.id||!g.started)return;
-    const sourceIndex=g.players.findIndex(p=>p.id===playerId);
-    if(sourceIndex<0)return;
-    const submission=g.submissions[playerId];
-    if(!submission)return;
-
-    const n=g.players.length;
-    const targetIndex=direction==="left"
-      ?(sourceIndex-1+n)%n
-      :(sourceIndex+1)%n;
-
-    const target=g.players[targetIndex];
-
-    // The source player's word is transferred to the neighbor.
-    // No socket other than the target receives the secret.
-    g.assignments[target.id]={
-      word:submission.word,
-      category:submission.category
-    };
-    g.currentTurn=targetIndex;
-    send(g);
-  });
-
-  s.on("reset",()=>{
-    const g=games.get(s.data.code);
-    if(!g||g.hostId!==s.id)return;
-    g.started=false;
-    g.submissions={};
-    g.assignments={};
-    g.currentTurn=0;
-    send(g);
-  });
-
-  s.on("disconnect",()=>{
-    const code=s.data.code,g=games.get(code);
-    if(!g)return;
-    if(g.hostId===s.id){
-      games.delete(code);
-      io.to(code).emit("closed");
-      return;
-    }
-    g.players=g.players.filter(p=>p.id!==s.id);
-    delete g.submissions[s.id];
-    delete g.assignments[s.id];
-    if(g.players.length)send(g);else games.delete(code);
-  });
+ s.on("create",({name})=>{name=String(name||"").trim().slice(0,24);if(!name)return s.emit("err","Enter your name.");let c=code(),g={code:c,hostId:s.id,players:[{id:s.id,name}],submissions:{},pending:null,active:{},phase:"lobby"};games.set(c,g);s.join(c);s.data.code=c;send(g)});
+ s.on("join",({code,name})=>{code=String(code||"").trim().toUpperCase();name=String(name||"").trim().slice(0,24);let g=games.get(code);if(!g)return s.emit("err","Game code not found.");if(g.phase!=="lobby")return s.emit("err","The round has started.");if(!name)return s.emit("err","Enter your name.");if(g.players.some(p=>p.name.toLowerCase()===name.toLowerCase()))return s.emit("err","That name is already in use.");g.players.push({id:s.id,name});s.join(code);s.data.code=code;send(g)});
+ s.on("submit",({word,category})=>{let g=games.get(s.data.code);if(!g||g.phase!=="lobby")return;word=String(word||"").trim().slice(0,120);category=String(category||"").trim().slice(0,60);if(!word||!category)return s.emit("err","Enter both a word/phrase and category.");g.submissions[s.id]={word,category};send(g)});
+ s.on("chooseMove",({sourceId,direction})=>{let g=games.get(s.data.code);if(!g||g.hostId!==s.id||g.phase!=="lobby")return;let i=g.players.findIndex(p=>p.id===sourceId);if(i<0||!g.submissions[sourceId])return s.emit("err","That player has not submitted a word.");if(!["left","right"].includes(direction))return;let t=direction==="left"?(i-1+g.players.length)%g.players.length:(i+1)%g.players.length;g.pending={sourceId,targetId:g.players[t].id,direction};send(g)});
+ s.on("startGame",()=>{let g=games.get(s.data.code);if(!g||g.hostId!==s.id||g.phase!=="lobby")return;if(g.players.length<2)return s.emit("err","At least 2 players are needed.");if(g.players.some(p=>!g.submissions[p.id]))return s.emit("err","Everyone must submit first.");if(!g.pending)return s.emit("err","Choose a card and press Move left or Move right first.");let a=g.submissions[g.pending.sourceId];g.active={};g.active[g.pending.targetId]={word:a.word,category:a.category};g.phase="playing";send(g)});
+ s.on("returnDashboard",()=>{let g=games.get(s.data.code);if(!g)return;delete g.active[s.id];g.phase="lobby";g.pending=null;send(g)});
+ s.on("reset",()=>{let g=games.get(s.data.code);if(!g||g.hostId!==s.id)return;g.submissions={};g.pending=null;g.active={};g.phase="lobby";send(g)});
+ s.on("disconnect",()=>{let g=games.get(s.data.code);if(!g)return;if(g.hostId===s.id){games.delete(g.code);return io.to(g.code).emit("closed")}g.players=g.players.filter(p=>p.id!==s.id);delete g.submissions[s.id];delete g.active[s.id];if(g.pending&&(g.pending.sourceId===s.id||g.pending.targetId===s.id))g.pending=null;if(g.players.length)send(g);else games.delete(g.code)})
 });
-
-const PORT=process.env.PORT||3000;
-server.listen(PORT,()=>console.log("Who Am I server listening on "+PORT));
+server.listen(process.env.PORT||3000);
